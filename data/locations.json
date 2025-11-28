@@ -1,0 +1,24 @@
+{
+  "db": [
+    {
+      "coords": {
+        "lat": 9.173261,
+        "lng": 76.499946,
+        "meta": null
+      },
+      "label": "track-me",
+      "ts": 1764321954970,
+      "address": "secondary road, Puthankadam General Colony, Kayamkulam, Karthikappally, Alappuzha, Kerala, 690502, India"
+    },
+    {
+      "coords": {
+        "lat": 9.173261,
+        "lng": 76.499946,
+        "meta": null
+      },
+      "label": "track-me",
+      "ts": 1764321959003,
+      "address": "secondary road, Puthankadam General Colony, Kayamkulam, Karthikappally, Alappuzha, Kerala, 690502, India"
+    }
+  ]
+}

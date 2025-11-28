@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Track Me</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+  <div class="max-w-3xl mx-auto px-4 py-8 space-y-6">
+    <header class="flex items-center justify-between">
+      <div>
+        <p class="text-xs uppercase text-sky-300 tracking-[0.2em] font-semibold">Live Socket Push</p>
+        <h1 class="text-2xl font-bold">Track Me (client pusher)</h1>
+        <p class="text-slate-400 text-sm">Emits your current location to the server every 5 seconds.</p>
+      </div>
+      <a href="/"
+        class="text-sm text-sky-300 hover:text-sky-200 underline underline-offset-4">Back to map</a>
+    </header>
+
+    <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-6 shadow-lg space-y-4">
+      <div class="flex flex-wrap gap-3">
+        <button id="start-btn"
+          class="px-4 py-2 rounded-lg bg-gradient-to-r from-emerald-400 to-cyan-400 text-slate-950 font-semibold shadow hover:scale-[1.01] transition">
+          Start tracking
+        </button>
+        <button id="stop-btn"
+          class="px-4 py-2 rounded-lg border border-slate-700 text-slate-200 font-semibold hover:bg-slate-800 transition"
+          disabled>
+          Stop
+        </button>
+        <button id="send-btn"
+          class="px-4 py-2 rounded-lg border border-slate-700 text-slate-200 font-semibold hover:bg-slate-800 transition"
+          disabled>
+          Send once
+        </button>
+      </div>
+      <div class="grid sm:grid-cols-2 gap-4 text-sm">
+        <div class="space-y-2">
+          <div class="text-slate-400 uppercase text-xs tracking-wide">Status</div>
+          <div id="status" class="font-mono text-sky-300">Idle</div>
+        </div>
+        <div class="space-y-2">
+          <div class="text-slate-400 uppercase text-xs tracking-wide">Last send</div>
+          <div id="last-send" class="font-mono text-slate-200">never</div>
+        </div>
+      </div>
+      <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-4 space-y-2 text-sm">
+        <div class="flex items-center justify-between">
+          <span class="text-slate-400 uppercase text-xs tracking-wide">Current coords</span>
+          <span class="text-slate-400 text-xs">auto every 5s</span>
+        </div>
+        <div id="coords" class="font-mono text-lg text-sky-300">--, --</div>
+        <div id="meta" class="text-xs text-slate-400"></div>
+      </div>
+
+      <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="flex gap-2">
+            <button data-lang="js" class="lang-tab px-3 py-1 rounded-md text-xs font-semibold bg-slate-800 border border-slate-700 text-slate-200">
+              JS
+            </button>
+            <button data-lang="flutter" class="lang-tab px-3 py-1 rounded-md text-xs font-semibold bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200">
+              Flutter
+            </button>
+          </div>
+          <button id="copy-snippet"
+            class="text-xs px-3 py-1 rounded-md bg-slate-800 border border-slate-700 hover:bg-slate-700">
+            Copy
+          </button>
+        </div>
+        <pre class="overflow-x-auto text-xs leading-5 bg-slate-900 rounded-lg border border-slate-800 p-3"><code id="snippet" class="text-slate-200"></code></pre>
+      </div>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const EMIT_MS = 5000;
+    const statusEl = document.getElementById('status');
+    const lastSendEl = document.getElementById('last-send');
+    const coordsEl = document.getElementById('coords');
+    const metaEl = document.getElementById('meta');
+    const startBtn = document.getElementById('start-btn');
+    const stopBtn = document.getElementById('stop-btn');
+    const sendBtn = document.getElementById('send-btn');
+    const copyBtn = document.getElementById('copy-snippet');
+    const snippetEl = document.getElementById('snippet');
+    const langTabs = Array.from(document.querySelectorAll('.lang-tab'));
+    const snippetText = {
+      js: `// Install: npm install socket.io-client
+import { io } from 'socket.io-client';
+
+const socket = io('http://localhost:3000');
+
+socket.on('connect', () => {
+  console.log('connected', socket.id);
+});
+
+socket.emit('location:update', {
+  coords: { lat: 37.42, lng: -122.08, meta: { speed: 12.3 } },
+  label: 'device-123',
+});
+
+socket.on('locations:init', (db) => {
+  console.log('initial points', db);
+});
+
+socket.on('locations:new', (entry) => {
+  console.log('new point', entry);
+});`,
+      flutter: `// pubspec.yaml
+// dependencies:
+//   socket_io_client: ^2.0.3+1
+
+import 'package:socket_io_client/socket_io_client.dart' as IO;
+
+void main() {
+  final socket = IO.io(
+    'http://localhost:3000',
+    IO.OptionBuilder()
+        .setTransports(['websocket'])
+        .disableAutoConnect()
+        .build(),
+  );
+
+  socket.onConnect((_) => print('connected \${socket.id}'));
+
+  socket.on('locations:init', (data) {
+    print('initial points \${data}');
+  });
+
+  socket.on('locations:new', (entry) {
+    print('new point \${entry}');
+  });
+
+  socket.connect();
+
+  socket.emit('location:update', {
+    'coords': {
+      'lat': 37.42,
+      'lng': -122.08,
+      'meta': {'speed': 12.3}
+    },
+    'label': 'device-123',
+  });
+}`
+    };
+
+    const snippetHtml = {
+      js: `// Install: npm install socket.io-client
+<span style="color:#a855f7">import</span> { io } <span style="color:#a855f7">from</span> 'socket.io-client';
+
+<span style="color:#a855f7">const</span> socket = io(<span style="color:#22d3ee">'http://localhost:3000'</span>);
+
+socket.on(<span style="color:#22d3ee">'connect'</span>, () => {
+  console.log(<span style="color:#22d3ee">'connected'</span>, socket.id);
+});
+
+socket.emit(<span style="color:#22d3ee">'location:update'</span>, {
+  coords: { lat: <span style="color:#a3e635">37.42</span>, lng: <span style="color:#a3e635">-122.08</span>, meta: { speed: <span style="color:#a3e635">12.3</span> } },
+  label: <span style="color:#22d3ee">'device-123'</span>,
+});
+
+socket.on(<span style="color:#22d3ee">'locations:init'</span>, (db) => {
+  console.log(<span style="color:#22d3ee">'initial points'</span>, db);
+});
+
+socket.on(<span style="color:#22d3ee">'locations:new'</span>, (entry) => {
+  console.log(<span style="color:#22d3ee">'new point'</span>, entry);
+});`,
+      flutter: `// pubspec.yaml
+// dependencies:
+//   socket_io_client: ^2.0.3+1
+
+<span style="color:#a855f7">import</span> 'package:socket_io_client/socket_io_client.dart' <span style="color:#a855f7">as</span> IO;
+
+<span style="color:#a855f7">void</span> main() {
+  <span style="color:#a855f7">final</span> socket = IO.io(
+    <span style="color:#22d3ee">'http://localhost:3000'</span>,
+    IO.OptionBuilder()
+        .setTransports([<span style="color:#22d3ee">'websocket'</span>])
+        .disableAutoConnect()
+        .build(),
+  );
+
+  socket.onConnect((_) => print(<span style="color:#22d3ee">'connected'</span> <span style="color:#a855f7">\${socket.id}</span>));
+
+  socket.on(<span style="color:#22d3ee">'locations:init'</span>, (data) {
+    print(<span style="color:#22d3ee">'initial points'</span> + <span style="color:#a855f7">\\${data}</span>);
+  });
+
+  socket.on(<span style="color:#22d3ee">'locations:new'</span>, (entry) => {
+    print(<span style="color:#22d3ee">'new point'</span> + <span style="color:#a855f7">\\${entry}</span>);
+  });
+
+  socket.connect();
+
+  socket.emit(<span style="color:#22d3ee">'location:update'</span>, {
+    <span style="color:#22d3ee">'coords'</span>: {
+      <span style="color:#22d3ee">'lat'</span>: <span style="color:#a3e635">37.42</span>,
+      <span style="color:#22d3ee">'lng'</span>: <span style="color:#a3e635">-122.08</span>,
+      <span style="color:#22d3ee">'meta'</span>: {<span style="color:#22d3ee">'speed'</span>: <span style="color:#a3e635">12.3</span>}
+    },
+    <span style="color:#22d3ee">'label'</span>: <span style="color:#22d3ee">'device-123'</span>,
+  });
+}`
+    };
+
+    let activeLang = 'js';
+    const renderSnippet = () => {
+      snippetEl.innerHTML = snippetHtml[activeLang];
+      langTabs.forEach((tab) => {
+        const on = tab.dataset.lang === activeLang;
+        tab.className = on
+          ? 'lang-tab px-3 py-1 rounded-md text-xs font-semibold bg-slate-800 border border-slate-700 text-slate-200'
+          : 'lang-tab px-3 py-1 rounded-md text-xs font-semibold bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200';
+      });
+    };
+
+    const socket = io();
+    let watchId = null;
+    let timer = null;
+    let latest = null;
+
+    const setStatus = (text, color = 'text-sky-300') => {
+      statusEl.textContent = text;
+      statusEl.className = `font-mono ${color}`;
+    };
+
+    const formatCoords = (pos) => `${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)}`;
+
+    const sendPayload = () => {
+      if (!latest) return;
+      const { lat, lng, meta } = latest;
+      socket.emit('location:update', {
+        coords: { lat, lng, meta },
+        label: 'track-me',
+      });
+      lastSendEl.textContent = new Date().toLocaleTimeString();
+    };
+
+    const handlePosition = (position) => {
+      const { latitude, longitude, accuracy, heading, speed, altitude } = position.coords;
+      latest = {
+        lat: latitude,
+        lng: longitude,
+        meta: {
+          accuracy: accuracy ?? null,
+          heading: heading ?? null,
+          speed: speed ?? null,
+          altitude: altitude ?? null,
+          source: 'track-me',
+        },
+      };
+      coordsEl.textContent = formatCoords(latest);
+      metaEl.textContent = `acc: ${accuracy ?? 'n/a'}, speed: ${speed ?? 'n/a'}, heading: ${heading ?? 'n/a'}, alt: ${altitude ?? 'n/a'}`;
+    };
+
+    const startTracking = () => {
+      if (!('geolocation' in navigator)) {
+        setStatus('Geolocation not available', 'text-amber-300');
+        return;
+      }
+
+      if (watchId !== null) return;
+
+      setStatus('Starting...€¦');
+      watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          setStatus('Tracking', 'text-emerald-300');
+          handlePosition(pos);
+        },
+        (err) => {
+          setStatus(`Geo error: ${err.message}`, 'text-rose-300');
+        },
+        { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 }
+      );
+
+      timer = setInterval(sendPayload, EMIT_MS);
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+      sendBtn.disabled = false;
+    };
+
+    const stopTracking = () => {
+      if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+      }
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+      setStatus('Idle', 'text-sky-300');
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      sendBtn.disabled = true;
+    };
+
+    startBtn.addEventListener('click', startTracking);
+    stopBtn.addEventListener('click', stopTracking);
+    sendBtn.addEventListener('click', sendPayload);
+    langTabs.forEach((tab) =>
+      tab.addEventListener('click', () => {
+        activeLang = tab.dataset.lang;
+        renderSnippet();
+      })
+    );
+
+    copyBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(snippetText[activeLang].trim());
+        copyBtn.textContent = 'Copied!';
+        setTimeout(() => (copyBtn.textContent = 'Copy'), 1200);
+      } catch (err) {
+        copyBtn.textContent = 'Copy failed';
+        setTimeout(() => (copyBtn.textContent = 'Copy'), 1200);
+      }
+    });
+
+    window.addEventListener('beforeunload', stopTracking);
+    renderSnippet();
+  </script>
+</body>
+</html>

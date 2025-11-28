@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live Location Feed</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100">
+  <div class="min-h-screen grid grid-rows-[320px_auto] md:grid-rows-1 md:grid-cols-[2fr_1fr]">
+    <div class="relative">
+      <div id="map" class="w-full h-full min-h-[320px]"></div>
+      <div class="absolute top-4 left-4 bg-black/60 border border-white/10 text-xs px-3 py-2 rounded-md shadow">
+        Live Location Feed
+      </div>
+    </div>
+
+    <div class="p-6 bg-slate-900/60 border-l border-slate-900 backdrop-blur overflow-y-auto space-y-5">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <h1 class="text-xl font-bold leading-tight">Live Location Feed</h1>
+          </div>
+          <div class="flex flex-col items-end gap-2">
+            <span id="count" class="text-sm text-slate-400">0 points</span>
+            <button id="auto-zoom-btn"
+              class="px-3 py-1 rounded-md text-xs font-semibold bg-emerald-500/20 text-emerald-200 border border-emerald-500/40">
+              Auto zoom: ON
+            </button>
+            <button id="clear-btn"
+              class="px-3 py-1 rounded-md text-xs font-semibold bg-rose-500/20 text-rose-100 border border-rose-500/40 hover:bg-rose-500/30">
+              Clear all
+            </button>
+          </div>
+        </div>
+
+      <div>
+        <div class="flex items-center justify-between mb-2">
+          <h2 class="text-lg font-semibold">Recent points</h2>
+        </div>
+        <div id="coord-list" class="space-y-3"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const db = [];
+    let map;
+    let polyline;
+    let startMarker;
+    let lastMarker;
+    let pointDots = [];
+    let cardRefs = {};
+    let highlightedIdx = null;
+    let autoZoom = true;
+
+    const listEl = document.getElementById('coord-list');
+    const countEl = document.getElementById('count');
+    const autoZoomBtn = document.getElementById('auto-zoom-btn');
+    const clearBtn = document.getElementById('clear-btn');
+    const socket = io();
+
+    const cleanMeta = (meta) =>
+      meta && typeof meta === 'object' && !Array.isArray(meta) ? meta : null;
+
+    const renderList = () => {
+      listEl.innerHTML = '';
+      cardRefs = {};
+      if (!db.length) {
+        const empty = document.createElement('div');
+        empty.className = 'text-sm text-slate-500 border border-dashed border-slate-800 rounded-lg p-4 text-center';
+        empty.textContent = 'No coordinates yet.';
+        listEl.appendChild(empty);
+        countEl.textContent = '0 points';
+        return;
+      }
+
+      db
+        .slice()
+        .reverse()
+        .forEach((entry, reverseIdx) => {
+          const idx = db.length - 1 - reverseIdx;
+          const container = document.createElement('div');
+          container.className =
+            'rounded-xl border border-slate-800 bg-slate-900/70 p-4 shadow-sm space-y-2';
+          container.dataset.idx = String(idx);
+
+          const header = document.createElement('div');
+          header.className = 'flex items-start justify-between gap-2';
+
+          const title = document.createElement('div');
+          title.className = 'text-sm font-semibold text-slate-100';
+          const metaLabel = entry.label || entry.coords?.meta?.label;
+          title.textContent = metaLabel || 'Point';
+
+          const time = document.createElement('div');
+          time.className = 'text-xs text-slate-400';
+          const date = new Date(entry.ts || Date.now());
+          time.textContent = date.toLocaleString();
+
+          header.appendChild(title);
+          header.appendChild(time);
+          container.appendChild(header);
+
+          const coordsLine = document.createElement('div');
+          coordsLine.className = 'text-xs font-mono text-sky-300';
+          const lat = entry.coords?.lat;
+          const lng = entry.coords?.lng;
+          coordsLine.textContent =
+            Number.isFinite(lat) && Number.isFinite(lng)
+              ? `${lat.toFixed(5)}, ${lng.toFixed(5)}`
+              : 'Invalid coords';
+          container.appendChild(coordsLine);
+
+          if (entry.address) {
+            const addr = document.createElement('div');
+            addr.className = 'text-xs text-slate-300 leading-snug';
+            addr.textContent = entry.address;
+            container.appendChild(addr);
+          }
+
+          const meta = cleanMeta(entry.meta);
+          if (meta && Object.keys(meta).length) {
+            const metaWrap = document.createElement('div');
+            metaWrap.className = 'flex flex-wrap gap-2';
+            Object.entries(meta).forEach(([key, value]) => {
+              const chip = document.createElement('div');
+              chip.className =
+                'text-xs bg-slate-800 border border-slate-700 rounded-full px-3 py-1 text-slate-200';
+              chip.textContent = `${key}: ${String(value)}`;
+              metaWrap.appendChild(chip);
+            });
+            container.appendChild(metaWrap);
+          }
+
+          listEl.appendChild(container);
+          cardRefs[idx] = container;
+        });
+
+      countEl.textContent = `${db.length} point${db.length === 1 ? '' : 's'}`;
+    };
+
+    const renderAutoZoomBtn = () => {
+      autoZoomBtn.textContent = autoZoom ? 'Auto zoom: ON' : 'Auto zoom: OFF';
+      autoZoomBtn.className = autoZoom
+        ? 'px-3 py-1 rounded-md text-xs font-semibold bg-emerald-500/20 text-emerald-200 border border-emerald-500/40'
+        : 'px-3 py-1 rounded-md text-xs font-semibold bg-slate-800 text-slate-300 border border-slate-700';
+    };
+
+    const setHighlight = (idx) => {
+      if (highlightedIdx !== null && cardRefs[highlightedIdx]) {
+        cardRefs[highlightedIdx].classList.remove('ring', 'ring-sky-400', 'ring-offset-2', 'ring-offset-slate-950');
+      }
+      highlightedIdx = idx;
+      if (idx !== null && cardRefs[idx]) {
+        cardRefs[idx].classList.add('ring', 'ring-sky-400', 'ring-offset-2', 'ring-offset-slate-950');
+        cardRefs[idx].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    };
+
+    const renderPath = () => {
+      if (!map || !polyline) return;
+      const path = polyline.getPath();
+      while (path.getLength()) {
+        path.pop();
+      }
+
+      const valid = [];
+      db.forEach((entry, idx) => {
+        const lat = Number(entry.coords?.lat);
+        const lng = Number(entry.coords?.lng);
+        if (Number.isFinite(lat) && Number.isFinite(lng)) {
+          const point = new google.maps.LatLng(lat, lng);
+          path.push(point);
+          valid.push({ point, idx });
+        }
+      });
+
+      if (startMarker) {
+        startMarker.setMap(null);
+        startMarker = null;
+      }
+      if (lastMarker) {
+        lastMarker.setMap(null);
+        lastMarker = null;
+      }
+      pointDots.forEach((m) => m.setMap(null));
+      pointDots = [];
+
+      if (valid.length) {
+        valid.forEach(({ point, idx }) => {
+          const marker = new google.maps.Marker({
+            position: point,
+            map,
+            icon: {
+              path: google.maps.SymbolPath.CIRCLE,
+              scale: 4,
+              fillColor: '#cbd5e1',
+              fillOpacity: 1,
+              strokeColor: '#0f172a',
+              strokeWeight: 1.5,
+            },
+            title: `Point ${idx + 1}`,
+          });
+          pointDots.push(marker);
+          marker.addListener('mouseover', () => setHighlight(idx));
+          marker.addListener('mouseout', () => setHighlight(null));
+        });
+
+        const start = valid[0];
+        startMarker = new google.maps.Marker({
+          position: start.point,
+          map,
+          title: 'Start',
+          icon: {
+            path: google.maps.SymbolPath.BACKWARD_CLOSED_ARROW,
+            scale: 6,
+            fillColor: '#f59e0b',
+            fillOpacity: 1,
+            strokeColor: '#0f172a',
+            strokeWeight: 2,
+          },
+        });
+        startMarker.addListener('mouseover', () => setHighlight(start.idx));
+        startMarker.addListener('mouseout', () => setHighlight(null));
+
+        const last = valid[valid.length - 1];
+        lastMarker = new google.maps.Marker({
+          position: last.point,
+          map,
+          title: 'Latest point',
+          icon: {
+            path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
+            scale: 7,
+            fillColor: '#22c55e',
+            fillOpacity: 1,
+            strokeColor: '#0f172a',
+            strokeWeight: 2,
+          },
+        });
+        lastMarker.addListener('mouseover', () => setHighlight(last.idx));
+        lastMarker.addListener('mouseout', () => setHighlight(null));
+
+        const bounds = new google.maps.LatLngBounds();
+        valid.forEach((entry) => bounds.extend(entry.point));
+        if (autoZoom) {
+          map.fitBounds(bounds);
+          if (valid.length === 1) {
+            map.setZoom(15);
+          }
+        }
+      }
+    };
+
+    const clearLocal = () => {
+      db.splice(0, db.length);
+      renderList();
+      renderPath();
+    };
+
+    const addEntry = (entry) => {
+      db.push(entry);
+      renderList();
+      renderPath();
+    };
+
+    socket.on('locations:init', (entries = []) => {
+      db.splice(0, db.length, ...entries);
+      renderList();
+      renderPath();
+    });
+
+    socket.on('locations:new', (entry) => {
+      addEntry(entry);
+    });
+
+    socket.on('locations:clear', () => {
+      clearLocal();
+    });
+
+    renderAutoZoomBtn();
+    autoZoomBtn.addEventListener('click', () => {
+      autoZoom = !autoZoom;
+      renderAutoZoomBtn();
+      if (autoZoom) {
+        renderPath();
+      }
+    });
+
+    clearBtn.addEventListener('click', () => {
+      const confirmed = confirm('Clear all stored locations?');
+      if (!confirmed) return;
+      socket.emit('locations:clear');
+    });
+
+    window.initMap = () => {
+      map = new google.maps.Map(document.getElementById('map'), {
+        center: { lat: 0, lng: 0 },
+        zoom: 2,
+        mapTypeControl: false,
+        streetViewControl: false,
+        fullscreenControl: false,
+        styles: [
+          { elementType: 'geometry', stylers: [{ color: '#0b1021' }] },
+          { elementType: 'labels.text.fill', stylers: [{ color: '#94a3b8' }] },
+          { elementType: 'labels.text.stroke', stylers: [{ color: '#0b1021' }] },
+          { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0b4360' }] },
+          { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#0d1829' }] },
+          { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#1f2937' }] },
+          { featureType: 'poi', stylers: [{ visibility: 'off' }] },
+        ],
+      });
+
+      polyline = new google.maps.Polyline({
+        map,
+        strokeColor: '#22d3ee',
+        strokeOpacity: 0.9,
+        strokeWeight: 4,
+      });
+
+      renderPath();
+    };
+  </script>
+  <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCQ4gw-Sqta-DGmKuePS41QyumtOD6RSnI&callback=initMap"></script>
+</body>
+</html>
