@@ -36,6 +36,7 @@ live-location/
 ## Pages
 
 ### `/` -> `public/index.html`
+[https://live-location-96ki.onrender.com/](https://live-location-96ki.onrender.com/)
 
 Main dashboard page.
 
@@ -51,6 +52,7 @@ Features:
 *   Supports auto-zoom toggle.
 
 ### `/track-me.html` -> `public/track-me.html`
+[https://live-location-96ki.onrender.com/track-me.html](https://live-location-96ki.onrender.com/track-me.html)
 
 Client page for sending the current browser location to the server.
 
